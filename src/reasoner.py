@@ -65,21 +65,28 @@ class Reasoner:
         path: list[tuple[int, str]] = []
         for depth in range(1, MAX_DEPTH + 1):
             parent = path[-1][1] if path else ""
-            # Query with parent thought — matches stored (parent→child) keys by parent similarity
-            query_text = parent if parent else DEPTH_ROLES[depth][0]
-            emb = self.engine.embed(query_text)
+            # 1. probe: generate without context
+            probe = self._gen_thought(problem, path, depth, context="")
+            # 2. query DB with full (parent→child) key
+            trans_key = f"{parent}\n{probe}" if parent else probe
+            emb = self.engine.embed(trans_key)
             retrieved = self.db.retrieve_by_depth(emb, depth=depth, k=3)
             context = _build_context(retrieved)
-            thought = self._gen_thought(problem, path, depth, context=context)
+            if context:
+                # 3. regenerate with injected context
+                thought = self._gen_thought(problem, path, depth, context=context)
+            else:
+                thought = probe
             path.append((depth, thought))
 
-        # Code generation with DB context
+        # Code generation: probe final transition, query, inject
         parent = path[-1][1] if path else ""
-        emb = self.engine.embed(parent)
+        probe_code = _extract_code(self._gen_code(problem, path, context=""))
+        emb = self.engine.embed(f"{parent}\n{probe_code[:200]}")
         retrieved = self.db.retrieve_by_depth(emb, depth=MAX_DEPTH, k=3)
         context = _build_context(retrieved)
-        code = self._gen_code(problem, path, context=context)
-        return _extract_code(code), path
+        code = self._gen_code(problem, path, context=context) if context else probe_code
+        return _extract_code(code) if context else probe_code, path
 
     # ── DB update ────────────────────────────────────────────────────
     def store_trajectory(
