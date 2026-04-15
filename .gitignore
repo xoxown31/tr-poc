@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Conda
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Runs / outputs
+runs/*.json
+runs/*.md
+runs/*.log
+!runs/.gitkeep
+
+# macOS
+.DS_Store
+
+# Model cache
+.cache/
+*.pkl
+*.pt
+*.bin
