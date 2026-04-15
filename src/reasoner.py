@@ -68,13 +68,12 @@ class Reasoner:
 
             # k candidates, scored via depth-aware DB retrieval
             best_thought, best_score = None, -1.0
-            best_context = ""
             for _ in range(K_CANDIDATES):
                 cand = self._gen_thought(problem, path, depth, context="")
                 score, _ = self._score_candidate(parent, cand, depth)
                 if score > best_score:
                     best_score, best_thought = score, cand
-        path.append((depth, best_thought))
+            path.append((depth, best_thought))
 
         # Code generation with full context from last reasoning step
         parent = path[-1][1] if path else ""
