@@ -4,18 +4,29 @@ from engine.transition_db import TransitionDB, TransitionEntry
 
 
 K_CANDIDATES = 3
-MAX_DEPTH = 3
+
+# Fixed depth roles — content varies per problem, role stays consistent
+DEPTH_ROLES = {
+    1: ("core algorithm",    "What is the core algorithm or approach?"),
+    2: ("edge cases",        "What edge cases must be handled?"),
+    3: ("implementation",    "How should the implementation be structured step by step?"),
+}
+MAX_DEPTH = len(DEPTH_ROLES)  # 3 reasoning depths + 1 code generation = 4 LLM calls total
 
 
-_SYSTEM = (
+_SYSTEM_REASON = (
     "You are an expert Python programmer. "
-    "Respond concisely. When asked for a reasoning step, output ONE short sentence. "
-    "When asked for code, output ONLY the Python function — no explanation, no markdown fences."
+    "Answer in ONE concise sentence. "
+    "Do NOT write any code or pseudocode — natural language only."
+)
+
+_SYSTEM_CODE = (
+    "You are an expert Python programmer. "
+    "Output ONLY the Python function body — no explanation, no markdown fences."
 )
 
 
 def _extract_code(text: str) -> str:
-    # Strip markdown fences if present
     text = re.sub(r"```python\s*", "", text)
     text = re.sub(r"```\s*", "", text)
     return text.strip()
@@ -25,7 +36,7 @@ def _build_context(retrieved: list) -> str:
     if not retrieved:
         return ""
     lines = ["Past experience from similar reasoning directions:"]
-    for sim, entry in retrieved:
+    for _, entry in retrieved:
         label = "PASS" if entry.label else "FAIL"
         lines.append(
             f"  [{label}] \"{entry.parent_text[:60]}\" → \"{entry.child_text[:60]}\""
@@ -44,7 +55,7 @@ class Reasoner:
     def run_standard(self, problem: str) -> tuple[str, list[tuple[int, str]]]:
         path: list[tuple[int, str]] = []
         for depth in range(1, MAX_DEPTH + 1):
-            thought = self._gen_thought(problem, path, context="")
+            thought = self._gen_thought(problem, path, depth, context="")
             path.append((depth, thought))
         code = self._gen_code(problem, path, context="")
         return _extract_code(code), path
@@ -54,20 +65,21 @@ class Reasoner:
         path: list[tuple[int, str]] = []
         for depth in range(1, MAX_DEPTH + 1):
             parent = path[-1][1] if path else ""
-            # Sample k candidates, pick best via DB signal
+
+            # k candidates, scored via depth-aware DB retrieval
             best_thought, best_score = None, -1.0
+            best_context = ""
             for _ in range(K_CANDIDATES):
-                cand = self._gen_thought(problem, path, context="")
-                score, context = self._score_candidate(parent, cand)
+                cand = self._gen_thought(problem, path, depth, context="")
+                score, _ = self._score_candidate(parent, cand, depth)
                 if score > best_score:
                     best_score, best_thought = score, cand
-            path.append((depth, best_thought))
+        path.append((depth, best_thought))
 
-        # Final code generation with full context
+        # Code generation with full context from last reasoning step
         parent = path[-1][1] if path else ""
-        trans_key = f"{parent}\n[code generation]"
-        emb = self.engine.embed(trans_key)
-        retrieved = self.db.retrieve(emb, k=3)
+        emb = self.engine.embed(f"{parent}\n[code generation]")
+        retrieved = self.db.retrieve_by_depth(emb, depth=MAX_DEPTH, k=3)
         context = _build_context(retrieved)
         code = self._gen_code(problem, path, context=context)
         return _extract_code(code), path
@@ -82,18 +94,12 @@ class Reasoner:
         problem_text: str = "",
         test_code: str = "",
     ) -> int:
-        """
-        Phase 1 (cold): store all novel transitions.
-        Phase 2 (warm): orthogonality gate first.
-        reward_text = verifier_output + LLM evaluator commentary.
-        """
         added = 0
         for i, (depth, thought) in enumerate(path):
             parent = path[i - 1][1] if i > 0 else ""
             trans_key = f"{parent}\n{thought}" if parent else thought
             emb = self.engine.embed(trans_key)
 
-            # Phase 2: skip non-novel early (before expensive evaluator call)
             if self.db.is_warm and not self.db.is_novel(emb):
                 continue
 
@@ -105,18 +111,56 @@ class Reasoner:
                 problem_text=problem_text,
                 test_code=test_code,
             )
-
             entry = TransitionEntry(
                 parent_text=parent,
                 child_text=thought,
                 label=label,
                 reward_text=reward_text,
+                depth=depth,
                 embedding=emb,
                 problem_id=problem_id,
             )
             if self.db.try_add(entry):
                 added += 1
         return added
+
+    # ── Internals ────────────────────────────────────────────────────
+    def _gen_thought(self, problem: str, path: list, depth: int, context: str) -> str:
+        _, question = DEPTH_ROLES[depth]
+        path_str = " → ".join(t for _, t in path) if path else "(start)"
+        ctx_block = f"\n{context}\n" if context else ""
+        prompt = (
+            f"Problem: {problem}\n"
+            f"Reasoning so far: {path_str}\n"
+            f"{ctx_block}"
+            f"{question} (one sentence, no code):"
+        )
+        return self.engine.generate(prompt, system=_SYSTEM_REASON)
+
+    def _gen_code(self, problem: str, path: list, context: str) -> str:
+        path_str = " → ".join(t for _, t in path)
+        ctx_block = f"\n{context}\n" if context else ""
+        prompt = (
+            f"Problem: {problem}\n"
+            f"Reasoning:\n{path_str}\n"
+            f"{ctx_block}"
+            f"Write the Python function:"
+        )
+        return self.engine.generate(prompt, system=_SYSTEM_CODE)
+
+    def _score_candidate(self, parent: str, candidate: str, depth: int) -> tuple[float, str]:
+        trans_key = f"{parent}\n{candidate}" if parent else candidate
+        emb = self.engine.embed(trans_key)
+        retrieved = self.db.retrieve_by_depth(emb, depth=depth, k=3)
+        context = _build_context(retrieved)
+
+        if not retrieved:
+            return 0.5, context
+
+        score = 0.5
+        for sim, entry in retrieved:
+            score += sim * (0.3 if entry.label else -0.3)
+        return max(0.0, min(1.0, score)), context
 
     def _evaluate(
         self,
@@ -140,43 +184,7 @@ class Reasoner:
             f"In one sentence, explain what this reasoning step did {'right' if label else 'wrong'} "
             f"in the context of the verifier output:"
         )
-        commentary = self.engine.generate(prompt, system="You are a concise code reasoning evaluator.")
+        commentary = self.engine.generate(
+            prompt, system="You are a concise code reasoning evaluator."
+        )
         return f"[Verifier: {verdict}] {verifier_block}\n[Evaluator] {commentary.strip()}"
-
-    # ── Internals ────────────────────────────────────────────────────
-    def _gen_thought(self, problem: str, path: list, context: str) -> str:
-        path_str = " → ".join(t for _, t in path) if path else "(start)"
-        ctx_block = f"\n{context}\n" if context else ""
-        prompt = (
-            f"Problem: {problem}\n"
-            f"Reasoning so far: {path_str}\n"
-            f"{ctx_block}"
-            f"Next reasoning step (one sentence):"
-        )
-        return self.engine.generate(prompt, system=_SYSTEM)
-
-    def _gen_code(self, problem: str, path: list, context: str) -> str:
-        path_str = " → ".join(t for _, t in path)
-        ctx_block = f"\n{context}\n" if context else ""
-        prompt = (
-            f"Problem: {problem}\n"
-            f"Reasoning: {path_str}\n"
-            f"{ctx_block}"
-            f"Write the Python function:"
-        )
-        return self.engine.generate(prompt, system=_SYSTEM)
-
-    def _score_candidate(self, parent: str, candidate: str) -> tuple[float, str]:
-        trans_key = f"{parent}\n{candidate}" if parent else candidate
-        emb = self.engine.embed(trans_key)
-        retrieved = self.db.retrieve(emb, k=3)
-        context = _build_context(retrieved)
-
-        if not retrieved:
-            return 0.5, context
-
-        # Score: mean similarity weighted by label (+1 PASS, -1 FAIL)
-        score = 0.5
-        for sim, entry in retrieved:
-            score += sim * (0.3 if entry.label else -0.3)
-        return max(0.0, min(1.0, score)), context

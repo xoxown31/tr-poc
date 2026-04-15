@@ -15,6 +15,7 @@ class TransitionEntry:
     child_text: str
     label: bool          # True = PASS, False = FAIL
     reward_text: str     # verifier output + LLM evaluator commentary
+    depth: int           # reasoning depth (1=algorithm, 2=edge cases, 3=implementation)
     embedding: np.ndarray
     problem_id: int
 
@@ -56,6 +57,15 @@ class TransitionDB:
         if not self.entries:
             return []
         scored = [(cosine_sim(query, e.embedding), e) for e in self.entries]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[:k]
+
+    def retrieve_by_depth(self, query: np.ndarray, depth: int, k: int = 3) -> list[tuple[float, TransitionEntry]]:
+        """Retrieve only entries at the same reasoning depth."""
+        pool = [e for e in self.entries if e.depth == depth]
+        if not pool:
+            return self.retrieve(query, k)  # fallback to all depths
+        scored = [(cosine_sim(query, e.embedding), e) for e in pool]
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[:k]
 
