@@ -3,8 +3,6 @@ from engine.ollama_engine import OllamaEngine
 from engine.transition_db import TransitionDB, TransitionEntry
 
 
-K_CANDIDATES = 3
-
 # Fixed depth roles — content varies per problem, role stays consistent
 DEPTH_ROLES = {
     1: ("core algorithm",    "What is the core algorithm or approach?"),
@@ -60,22 +58,18 @@ class Reasoner:
         code = self._gen_code(problem, path, context="")
         return _extract_code(code), path
 
-    # ── Replay: DB injection ──────────────────────────────────────────
+    # ── Replay: DB injection at every step ───────────────────────────
     def run_replay(self, problem: str) -> tuple[str, list[tuple[int, str]]]:
         path: list[tuple[int, str]] = []
         for depth in range(1, MAX_DEPTH + 1):
             parent = path[-1][1] if path else ""
+            emb = self.engine.embed(f"{parent}\n{DEPTH_ROLES[depth][0]}")
+            retrieved = self.db.retrieve_by_depth(emb, depth=depth, k=3)
+            context = _build_context(retrieved)
+            thought = self._gen_thought(problem, path, depth, context=context)
+            path.append((depth, thought))
 
-            # k candidates, scored via depth-aware DB retrieval
-            best_thought, best_score = None, -1.0
-            for _ in range(K_CANDIDATES):
-                cand = self._gen_thought(problem, path, depth, context="")
-                score, _ = self._score_candidate(parent, cand, depth)
-                if score > best_score:
-                    best_score, best_thought = score, cand
-            path.append((depth, best_thought))
-
-        # Code generation with full context from last reasoning step
+        # Code generation with DB context
         parent = path[-1][1] if path else ""
         emb = self.engine.embed(f"{parent}\n[code generation]")
         retrieved = self.db.retrieve_by_depth(emb, depth=MAX_DEPTH, k=3)
@@ -146,20 +140,6 @@ class Reasoner:
             f"Write the Python function:"
         )
         return self.engine.generate(prompt, system=_SYSTEM_CODE)
-
-    def _score_candidate(self, parent: str, candidate: str, depth: int) -> tuple[float, str]:
-        trans_key = f"{parent}\n{candidate}" if parent else candidate
-        emb = self.engine.embed(trans_key)
-        retrieved = self.db.retrieve_by_depth(emb, depth=depth, k=3)
-        context = _build_context(retrieved)
-
-        if not retrieved:
-            return 0.5, context
-
-        score = 0.5
-        for sim, entry in retrieved:
-            score += sim * (0.3 if entry.label else -0.3)
-        return max(0.0, min(1.0, score)), context
 
     def _evaluate(
         self,
