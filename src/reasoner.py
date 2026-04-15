@@ -93,9 +93,6 @@ class Reasoner:
             trans_key = f"{parent}\n{thought}" if parent else thought
             emb = self.engine.embed(trans_key)
 
-            if self.db.is_warm and not self.db.is_novel(emb):
-                continue
-
             reward_text = self._evaluate(
                 thought=thought,
                 parent=parent,

@@ -47,11 +47,11 @@ class TransitionDB:
         return max(sims) < self.orth_threshold
 
     def try_add(self, entry: TransitionEntry) -> bool:
-        """Returns True if added (novel), False if skipped (redundant)."""
-        if self.is_novel(entry.embedding):
-            self.entries.append(entry)
-            return True
-        return False
+        """Cold: always add. Warm: orthogonality gate."""
+        if self.is_warm and not self.is_novel(entry.embedding):
+            return False
+        self.entries.append(entry)
+        return True
 
     def retrieve(self, query: np.ndarray, k: int = 3) -> list[tuple[float, TransitionEntry]]:
         if not self.entries:
