@@ -14,6 +14,7 @@ class TransitionEntry:
     parent_text: str
     child_text: str
     label: bool          # True = PASS, False = FAIL
+    reward_text: str     # verifier output + LLM evaluator commentary
     embedding: np.ndarray
     problem_id: int
 

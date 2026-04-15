@@ -30,6 +30,8 @@ def _build_context(retrieved: list) -> str:
         lines.append(
             f"  [{label}] \"{entry.parent_text[:60]}\" → \"{entry.child_text[:60]}\""
         )
+        if entry.reward_text:
+            lines.append(f"         Feedback: {entry.reward_text[:200]}")
     return "\n".join(lines)
 
 
@@ -71,27 +73,75 @@ class Reasoner:
         return _extract_code(code), path
 
     # ── DB update ────────────────────────────────────────────────────
-    def store_trajectory(self, path: list[tuple[int, str]], label: bool, problem_id: int) -> int:
+    def store_trajectory(
+        self,
+        path: list[tuple[int, str]],
+        label: bool,
+        problem_id: int,
+        verifier_output: str = "",
+        problem_text: str = "",
+        test_code: str = "",
+    ) -> int:
         """
-        Phase 1 (cold): store all novel transitions regardless.
-        Phase 2 (warm): orthogonality check doubles as gate — try_add handles it.
-        Returns number of new entries added.
+        Phase 1 (cold): store all novel transitions.
+        Phase 2 (warm): orthogonality gate first.
+        reward_text = verifier_output + LLM evaluator commentary.
         """
         added = 0
         for i, (depth, thought) in enumerate(path):
             parent = path[i - 1][1] if i > 0 else ""
             trans_key = f"{parent}\n{thought}" if parent else thought
             emb = self.engine.embed(trans_key)
+
+            # Phase 2: skip non-novel early (before expensive evaluator call)
+            if self.db.is_warm and not self.db.is_novel(emb):
+                continue
+
+            reward_text = self._evaluate(
+                thought=thought,
+                parent=parent,
+                label=label,
+                verifier_output=verifier_output,
+                problem_text=problem_text,
+                test_code=test_code,
+            )
+
             entry = TransitionEntry(
                 parent_text=parent,
                 child_text=thought,
                 label=label,
+                reward_text=reward_text,
                 embedding=emb,
                 problem_id=problem_id,
             )
             if self.db.try_add(entry):
                 added += 1
         return added
+
+    def _evaluate(
+        self,
+        thought: str,
+        parent: str,
+        label: bool,
+        verifier_output: str,
+        problem_text: str,
+        test_code: str,
+    ) -> str:
+        verdict = "PASSED" if label else "FAILED"
+        verifier_block = verifier_output.strip()[:300] if verifier_output.strip() else "No output."
+        prompt = (
+            f"A reasoning step was taken while solving a coding problem.\n\n"
+            f"Problem: {problem_text}\n"
+            f"Test code:\n{test_code}\n\n"
+            f"Previous reasoning: {parent or '(start)'}\n"
+            f"This reasoning step: {thought}\n\n"
+            f"Verifier result: {verdict}\n"
+            f"Verifier output:\n{verifier_block}\n\n"
+            f"In one sentence, explain what this reasoning step did {'right' if label else 'wrong'} "
+            f"in the context of the verifier output:"
+        )
+        commentary = self.engine.generate(prompt, system="You are a concise code reasoning evaluator.")
+        return f"[Verifier: {verdict}] {verifier_block}\n[Evaluator] {commentary.strip()}"
 
     # ── Internals ────────────────────────────────────────────────────
     def _gen_thought(self, problem: str, path: list, context: str) -> str:

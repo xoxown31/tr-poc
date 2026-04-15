@@ -22,7 +22,7 @@ console = Console()
 RUNS_DIR = os.path.join(os.path.dirname(__file__), "..", "runs")
 
 # ── Config ────────────────────────────────────────────────────────────
-MODEL       = "gemma4:e4b"
+MODEL       = "gemma4:e2b"
 EMBED_MODEL = "nomic-embed-text"
 ORTH_THRESHOLD = 0.85
 WARM_THRESHOLD = 20   # Phase 2 kicks in after this many DB entries
@@ -99,8 +99,11 @@ def run():
             console.print(Panel(std_res["stderr"].strip()[:300],
                                 title="[red]Error[/red]", border_style="red dim", padding=(0,1)))
 
-        # Store standard trajectory (Phase 1/2 handled inside)
-        added = reasoner.store_trajectory(std_path, std_ok, pid)
+        added = reasoner.store_trajectory(
+            std_path, std_ok, pid,
+            verifier_output=std_res["stderr"] or std_res["stdout"],
+            problem_text=prob, test_code=tests,
+        )
         console.print(f"  [dim]→ {added} transition(s) added to DB[/dim]")
         print_db_stats(db)
 
@@ -119,7 +122,11 @@ def run():
             console.print(Panel(rep_res["stderr"].strip()[:300],
                                 title="[red]Error[/red]", border_style="red dim", padding=(0,1)))
 
-        added = reasoner.store_trajectory(rep_path, rep_ok, pid)
+        added = reasoner.store_trajectory(
+            rep_path, rep_ok, pid,
+            verifier_output=rep_res["stderr"] or rep_res["stdout"],
+            problem_text=prob, test_code=tests,
+        )
         console.print(f"  [dim]→ {added} transition(s) added to DB[/dim]")
         print_db_stats(db)
 

@@ -10,7 +10,7 @@ conda activate tr-poc
 ```
 
 ```bash
-ollama pull gemma4:e4b
+ollama pull gemma4:e2b
 ollama pull nomic-embed-text
 ```
 
