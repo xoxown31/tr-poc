@@ -22,7 +22,7 @@ console = Console()
 RUNS_DIR = os.path.join(os.path.dirname(__file__), "..", "runs")
 
 # ── Config ────────────────────────────────────────────────────────────
-MODEL       = "gemma3:4b"
+MODEL       = "gemma4:e4b"
 EMBED_MODEL = "nomic-embed-text"
 ORTH_THRESHOLD = 0.85
 WARM_THRESHOLD = 20   # Phase 2 kicks in after this many DB entries
