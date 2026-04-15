@@ -22,7 +22,7 @@ _SYSTEM_REASON = (
 
 _SYSTEM_CODE = (
     "You are an expert Python programmer. "
-    "Output ONLY the Python function body — no explanation, no markdown fences."
+    "Output ONLY the complete Python function including the def line — no explanation, no markdown fences."
 )
 
 
