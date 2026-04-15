@@ -71,7 +71,7 @@ def run():
     engine   = OllamaEngine(model=MODEL, embed_model=EMBED_MODEL)
     db       = TransitionDB(orthogonality_threshold=ORTH_THRESHOLD, warm_threshold=WARM_THRESHOLD)
     executor = LocalExecutor()
-    reasoner = Reasoner(engine=engine, db=db)
+    reasoner = Reasoner(engine=engine, db=db, executor=executor)
 
     results: list[dict] = []
 
@@ -99,11 +99,7 @@ def run():
             console.print(Panel(std_res["stderr"].strip()[:300],
                                 title="[red]Error[/red]", border_style="red dim", padding=(0,1)))
 
-        added = reasoner.store_trajectory(
-            std_path, std_ok, pid,
-            verifier_output=std_res["stderr"] or std_res["stdout"],
-            problem_text=prob, test_code=tests,
-        )
+        added = reasoner.store_trajectory(std_path, pid, prob, tests)
         console.print(f"  [dim]→ {added} transition(s) added to DB[/dim]")
         print_db_stats(db)
 
@@ -122,11 +118,7 @@ def run():
             console.print(Panel(rep_res["stderr"].strip()[:300],
                                 title="[red]Error[/red]", border_style="red dim", padding=(0,1)))
 
-        added = reasoner.store_trajectory(
-            rep_path, rep_ok, pid,
-            verifier_output=rep_res["stderr"] or rep_res["stdout"],
-            problem_text=prob, test_code=tests,
-        )
+        added = reasoner.store_trajectory(rep_path, pid, prob, tests)
         console.print(f"  [dim]→ {added} transition(s) added to DB[/dim]")
         print_db_stats(db)
 

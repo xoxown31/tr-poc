@@ -1,6 +1,7 @@
 import re
 from engine.ollama_engine import OllamaEngine
 from engine.transition_db import TransitionDB, TransitionEntry
+from engine.executor import LocalExecutor
 
 
 # Fixed depth roles — content varies per problem, role stays consistent
@@ -45,9 +46,10 @@ def _build_context(retrieved: list) -> str:
 
 
 class Reasoner:
-    def __init__(self, engine: OllamaEngine, db: TransitionDB):
+    def __init__(self, engine: OllamaEngine, db: TransitionDB, executor: LocalExecutor):
         self.engine = engine
         self.db = db
+        self.executor = executor
 
     # ── Standard: no DB ──────────────────────────────────────────────
     def run_standard(self, problem: str) -> tuple[str, list[tuple[int, str]]]:
@@ -81,15 +83,27 @@ class Reasoner:
     def store_trajectory(
         self,
         path: list[tuple[int, str]],
-        label: bool,
         problem_id: int,
-        verifier_output: str = "",
-        problem_text: str = "",
-        test_code: str = "",
+        problem_text: str,
+        test_code: str,
     ) -> int:
+        """
+        Per-depth labeling:
+        - Generate partial code from reasoning up to depth d
+        - Execute test suite → get ground truth label for that depth
+        - Cold: store all, Warm: orthogonality gate in try_add
+        """
         added = 0
         for i, (depth, thought) in enumerate(path):
             parent = path[i - 1][1] if i > 0 else ""
+
+            # Generate partial code up to this depth and test
+            partial_path = path[:i + 1]
+            partial_code = _extract_code(self._gen_code(problem_text, partial_path, context=""))
+            result = self.executor.execute(partial_code, test_code)
+            label = result["success"]
+            verifier_output = result["stderr"] or result["stdout"]
+
             trans_key = f"{parent}\n{thought}" if parent else thought
             emb = self.engine.embed(trans_key)
 
