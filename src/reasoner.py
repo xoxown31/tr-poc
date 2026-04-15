@@ -65,7 +65,9 @@ class Reasoner:
         path: list[tuple[int, str]] = []
         for depth in range(1, MAX_DEPTH + 1):
             parent = path[-1][1] if path else ""
-            emb = self.engine.embed(f"{parent}\n{DEPTH_ROLES[depth][0]}")
+            # Query with parent thought — matches stored (parent→child) keys by parent similarity
+            query_text = parent if parent else DEPTH_ROLES[depth][0]
+            emb = self.engine.embed(query_text)
             retrieved = self.db.retrieve_by_depth(emb, depth=depth, k=3)
             context = _build_context(retrieved)
             thought = self._gen_thought(problem, path, depth, context=context)
@@ -73,7 +75,7 @@ class Reasoner:
 
         # Code generation with DB context
         parent = path[-1][1] if path else ""
-        emb = self.engine.embed(f"{parent}\n[code generation]")
+        emb = self.engine.embed(parent)
         retrieved = self.db.retrieve_by_depth(emb, depth=MAX_DEPTH, k=3)
         context = _build_context(retrieved)
         code = self._gen_code(problem, path, context=context)
